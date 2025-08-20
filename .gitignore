@@ -1,4 +1,8 @@
-.Rproj.user
+# Ignore raw and processed trial data
+*.csv
+*.rds
+
+# Ignore RStudio project/session files
+.Rproj.user/
 .Rhistory
 .RData
-.Ruserdata
