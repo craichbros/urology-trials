@@ -59,7 +59,7 @@ df_trials <- bind_rows(all_studies)
 # ---------------------------------------------------------------
 if (!dir.exists("data")) dir.create("data")
 today <- Sys.Date()
-rds_file <- paste0("data/raw_trials_", gsub(" ", "_", condition), "_", today, ".rds")
+ 
 saveRDS(df_trials, rds_file)
 cat("Saved", nrow(df_trials), "raw rows to", rds_file, "\n")
 

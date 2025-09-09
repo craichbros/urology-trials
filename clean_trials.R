@@ -8,6 +8,7 @@ library(dplyr)
 library(readr)
 library(purrr)
 library(tidyr)
+library(stringr)
 
 # ---------------------------------------------------------------
 # 1. Read the raw data (latest file)
@@ -23,7 +24,7 @@ df_raw <- readRDS(raw_file)
 # 2. Select and rename relevant fields
 # ---------------------------------------------------------------
 
-# --- Basic helpers ------------------------------------------------------------
+# Basic helpers
 
 # Safe column getter (exact match)
 getcol <- function(df, nm) if (nm %in% names(df)) df[[nm]] else rep(NA, nrow(df))
@@ -134,7 +135,7 @@ collect_by_prefix <- function(df, prefix, fields = NULL, sep = "; ") {
   out
 }
 
-# --- Field-specific extractors ------------------------------------------------
+# Field-specific extractors 
 
 # Phase (robust, with observational fallback)
 get_phase_robust <- function(df) {
@@ -159,7 +160,7 @@ get_phase_robust <- function(df) {
   phase_norm
 }
 
-# --- Prepare critical fields before final table -------------------------------
+# Prepare critical fields before final table 
 
 Phase_final <- get_phase_robust(df_raw)
 
@@ -201,7 +202,7 @@ Start_final <- coalesce_nonempty(
   NA_character_
 )
 
-# --- Build final clean dataset ------------------------------------------------
+# Build final clean dataset 
 
 df_clean <- tibble::tibble(
   NCTId   = get_nct(df_raw),
@@ -288,8 +289,12 @@ df_clean <- tibble::tibble(
 # ---------------------------------------------------------------
 # 3. Save clean dataset
 # ---------------------------------------------------------------
-date_str <- sub(".*_(\\d{4}-\\d{2}-\\d{2})\\.(csv|rds)$", "\\1", basename(raw_file))
-out_file <- paste0("data/clean_trials_prostate_", date_str, ".csv")
+bn <- basename(raw_file)
+m <- stringr::str_match(bn, "^raw_trials_(.+)_(\\d{4}-\\d{2}-\\d{2})\\.rds$")
+cond_slug <- m[,2]
+date_str  <- m[,3]
+if (is.na(cond_slug) || cond_slug == "") cond_slug <- "unknown_condition"
+out_file <- file.path("data", paste0("clean_trials_", cond_slug, "_", date_str, ".csv"))
 write_csv(df_clean, out_file)
 
 # ---------------------------------------------------------------

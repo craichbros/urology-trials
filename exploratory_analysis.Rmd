@@ -1,0 +1,521 @@
+---
+title: "Exploratory Analysis — Urology Trials"
+author: "Carles Raich Bros"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: cosmo
+params:
+  clean_file: "data/clean_trials_prostate_cancer_2025-08-20.csv"
+  interactive: true
+---
+
+# Script: exploratory_analysis.Rmd
+# ---------------------------------------------------------------
+# Script to explore and visualize cleaned ClinicalTrials.gov data
+# Focus: descriptive statistics and plots for urology trials
+# ---------------------------------------------------------------
+```{r, include=FALSE}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(stringr)
+
+theme_set(theme_minimal(base_size = 12))
+```
+
+# ---------------------------------------------------------------
+# 1. Load data
+# ---------------------------------------------------------------
+```{r}
+clean_file <- params$clean_file
+df <- read_csv(clean_file, show_col_types = FALSE)
+
+cat("Loaded", nrow(df), "trials\n")
+
+bn <- basename(clean_file)
+m <- stringr::str_match(bn, "^clean_trials_(.+)_(\\d{4}-\\d{2}-\\d{2})\\.csv$")
+cond_slug <- m[,2]  
+date_str  <- m[,3]   
+condition <- stringr::str_replace_all(cond_slug, "_", " ") |> stringr::str_to_title()
+```
+
+# ---------------------------------------------------------------
+# 2. Basic preparation & split trials by status
+# ---------------------------------------------------------------
+```{r}
+# Phase labels helper
+pretty_phase <- function(x) {
+  x <- toupper(trimws(x))
+  x[x %in% c("N/A", "NA", "", NA)] <- NA
+  x <- gsub("PHASE\\s*([0-4])\\s*[,;:_\\-]+\\s*PHASE\\s*([0-4])", "PHASE\\1/PHASE\\2", x, perl = TRUE)
+  x <- gsub("EARLY\\s*PHASE\\s*1|EARLY_PHASE_?1", "Early Phase 1", x)
+  x <- gsub("^PHASE\\s*([0-4])$", "Phase \\1", x)
+  x <- gsub("^PHASE\\s*([0-4])\\s*/\\s*PHASE\\s*([0-4])$", "Phase \\1/\\2", x)
+   x <- tools::toTitleCase(tolower(x))
+  x
+}
+df <- df %>%
+  dplyr::mutate(Phase = pretty_phase(Phase))
+
+# Intervention helper
+extract_intervention_type <- function(x) {
+  t <- sub("^\\s*([^;]+);.*$", "\\1", x)
+  t[is.na(x) | !nzchar(trimws(x))] <- NA_character_
+  t
+}
+
+pretty_label <- function(x) {
+  ifelse(
+    is.na(x),
+    NA_character_,
+    tools::toTitleCase(gsub("_", " ", tolower(trimws(x))))
+  )
+}
+
+df <- df %>%
+  dplyr::mutate(
+    SimpleIntervention = pretty_label(extract_intervention_type(Interventions))
+  )
+
+# Status classification
+status_finished <- c("COMPLETED","APPROVED_FOR_MARKETING")
+status_inprog   <- c("RECRUITING","ACTIVE_NOT_RECRUITING","ENROLLING_BY_INVITATION","NOT_YET_RECRUITING")
+status_failed   <- c("TERMINATED","WITHDRAWN","SUSPENDED",
+                     "TEMPORARILY_NOT_AVAILABLE","NO_LONGER_AVAILABLE")
+# Data frames by status
+df_finished <- df %>% filter(Status %in% status_finished)
+df_inprogress <- df %>% filter(Status %in% status_inprog)
+df_failed <- df %>% filter(Status %in% status_failed)
+
+# Numbers
+n_total  <- nrow(df)
+n_finished <- nrow(df_finished)
+n_inprogress <- nrow(df_inprogress)
+n_failed <- nrow(df_failed)
+```
+
+# ---------------------------------------------------------------
+# 3. Discontinued / failed trials
+# ---------------------------------------------------------------
+```{r}
+# Opening sentence
+pct_failed <- if (n_total > 0) round(100 * n_failed / n_total, 1) else NA_real_
+msg_failed <- sprintf(
+  "%d %s clinical trial%s were discontinued (terminated/withdrawn/suspended) as of %s (%s%% of downloaded trials).",
+  n_failed,
+  condition,
+  ifelse(n_failed == 1, "", "s"),
+  date_str,
+  ifelse(is.na(pct_failed), "NA", pct_failed)
+)
+cat(msg_failed, "\n")
+
+# Breakdown by sub-status
+failed_breakdown <- df_failed %>%
+  dplyr::filter(!is.na(Status)) %>%
+  dplyr::mutate(
+    Status = gsub("_", " ", tolower(Status)),         
+    Status = paste0(toupper(substr(Status, 1, 1)),    
+                    substr(Status, 2, nchar(Status))) 
+  ) %>%
+  dplyr::count(Status, sort = TRUE)
+
+print(failed_breakdown)
+
+# Bar chart by sub-status
+failed_breakdown$Status <- factor(failed_breakdown$Status,
+                                  levels = failed_breakdown$Status)
+
+ggplot(failed_breakdown, aes(x = Status, y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = paste0("Discontinued trials by sub-status — ", condition),
+    subtitle = paste("As of", date_str),
+    x = "Sub-status", y = "Count"
+  )
+```
+
+# ---------------------------------------------------------------
+# 4. Trials in progress
+# ---------------------------------------------------------------
+```{r}
+# Opening sentence
+
+pct_inprog <- if (n_total > 0) round(100 * n_inprogress / n_total, 1) else NA_real_
+msg_inprog <- sprintf(
+  "%d %s clinical trial%s are in progress as of %s (%s%% of downloaded trials).",
+  n_inprogress,
+  condition,
+  ifelse(n_inprogress == 1, "", "s"),
+  date_str,
+  ifelse(is.na(pct_inprog), "NA", pct_inprog)
+)
+cat(msg_inprog, "\n")
+
+# Phase
+
+n_phase_known_inprog <- sum(!is.na(df_inprogress$Phase))
+pct_phase_known_inprog <- if (n_inprogress > 0) round(100 * n_phase_known_inprog / n_inprogress, 1) else NA_real_
+
+msg_inprog_phase <- sprintf(
+  "Phase information available for %d of %d in-progress trials (%s%%).",
+  n_phase_known_inprog, n_inprogress,
+  ifelse(is.na(pct_phase_known_inprog), "NA", pct_phase_known_inprog)
+)
+cat(msg_inprog_phase, "\n")
+
+inprogress_phase_breakdown <- df_inprogress %>%
+  dplyr::filter(!is.na(Phase)) %>%
+  dplyr::count(Phase, sort = TRUE)
+
+print(inprogress_phase_breakdown)
+
+order_phase <- c("Early Phase 1","Phase 1","Phase 1/2","Phase 2","Phase 2/3","Phase 3","Phase 4")
+inprogress_phase_breakdown$Phase <- factor(inprogress_phase_breakdown$Phase, levels = order_phase)
+
+ggplot(inprogress_phase_breakdown, aes(x = Phase, y = n)) +
+  geom_col() + coord_flip() +
+  labs(title = paste0("In-progress trials by phase — ", condition),
+       subtitle = paste("As of", date_str),
+       x = "Phase", y = "Count")
+
+# Intervention
+
+n_interv_known_inprogress <- sum(!is.na(df_inprogress$Interventions) & nzchar(trimws(df_inprogress$Interventions)))
+pct_interv_known_inprogress <- if (n_inprogress > 0) round(100 * n_interv_known_inprogress / n_inprogress, 1) else NA_real_
+
+msg_inprogress_interv <- sprintf(
+  "Intervention information available for %d of %d in-progress trials (%s%%).",
+  n_interv_known_inprogress, n_inprogress,
+  ifelse(is.na(pct_interv_known_inprogress), "NA", pct_interv_known_inprogress)
+)
+cat(msg_inprogress_interv, "\n")
+
+inprogress_interv_breakdown <- df_inprogress %>%
+  dplyr::filter(!is.na(SimpleIntervention) & nzchar(SimpleIntervention)) %>%
+  dplyr::count(SimpleIntervention, sort = TRUE)
+
+print(inprogress_interv_breakdown)
+
+ggplot(inprogress_interv_breakdown,
+       aes(x = forcats::fct_reorder(SimpleIntervention, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = paste0("In-progress trials by intervention type — ", condition),
+    subtitle = paste("As of", date_str),
+    x = "Intervention type", y = "Count"
+  )
+  
+# Sponsors & Collaborators
+
+n_sponsor_known_inprogress <- sum(!is.na(df_inprogress$Sponsor) & nzchar(trimws(df_inprogress$Sponsor)))
+pct_sponsor_known_inprogress <- if (n_inprogress > 0) round(100 * n_sponsor_known_inprogress / n_inprogress, 1) else NA_real_
+
+n_collab_known_inprogress <- sum(!is.na(df_inprogress$Collaborators) & nzchar(trimws(df_inprogress$Collaborators)))
+pct_collab_known_inprogress <- if (n_inprogress > 0) round(100 * n_collab_known_inprogress / n_inprogress, 1) else NA_real_
+
+msg_inprogress_sponsor <- sprintf(
+  "Sponsor information available for %d of %d in-progress trials (%s%%).",
+  n_sponsor_known_inprogress, n_inprogress,
+  ifelse(is.na(pct_sponsor_known_inprogress), "NA", pct_sponsor_known_inprogress)
+)
+cat(msg_inprogress_sponsor, "\n")
+
+msg_inprogress_collab <- sprintf(
+  "Collaborator information available for %d of %d in-progress trials (%s%%).",
+  n_collab_known_inprogress, n_inprogress,
+  ifelse(is.na(pct_collab_known_inprogress), "NA", pct_collab_known_inprogress)
+)
+cat(msg_inprogress_collab, "\n")
+
+inprogress_sponsor_top <- df_inprogress %>%
+  dplyr::filter(!is.na(Sponsor) & nzchar(trimws(Sponsor))) %>%
+  dplyr::transmute(Sponsor = trimws(Sponsor)) %>%
+  tidyr::separate_rows(Sponsor, sep = ";") %>%
+  dplyr::mutate(Sponsor = trimws(Sponsor)) %>%
+  dplyr::filter(nzchar(Sponsor)) %>%
+  dplyr::count(Sponsor, sort = TRUE) %>%
+  dplyr::mutate(pct = if (n_inprogress > 0) round(100 * n / n_inprogress, 1) else NA_real_,
+                pct = ifelse(is.na(pct), "NA", sprintf("%.1f%%", pct))) %>%
+  dplyr::slice_head(n = 10)
+
+cat("Top 10 sponsors (share of in-progress trials)\n")
+print(inprogress_sponsor_top)
+
+inprogress_collaborators_top <- df_inprogress %>%
+  dplyr::filter(!is.na(Collaborators) & nzchar(trimws(Collaborators))) %>%
+  dplyr::transmute(Collaborators = trimws(Collaborators)) %>%
+  tidyr::separate_rows(Collaborators, sep = ";") %>%
+  dplyr::mutate(Collaborator = trimws(Collaborators)) %>%
+  dplyr::filter(nzchar(Collaborator)) %>%
+  # Exclou tokens TOT en majúscules excepte "NIH"
+  dplyr::filter(!(Collaborator != "NIH" & stringr::str_detect(Collaborator, "^[A-Z0-9 &/\\-]+$"))) %>%
+  dplyr::count(Collaborator, sort = TRUE) %>%
+  dplyr::mutate(pct = if (n_inprogress > 0) sprintf("%.1f%%", 100 * n / n_inprogress) else "NA") %>%
+  dplyr::slice_head(n = 10)
+
+cat("Top 10 collaborators (share of in-progress trials)\n")
+print(inprogress_collaborators_top)
+```
+
+# ---------------------------------------------------------------
+# 5. Trials completed
+# ---------------------------------------------------------------
+```{r}
+# Opening sentence
+
+pct_finished <- if (n_total > 0) round(100 * n_finished / n_total, 1) else NA_real_
+msg_finished <- sprintf(
+  "%d %s clinical trial%s have been completed as of %s (%s%% of downloaded trials).",
+  n_finished,
+  condition,
+  ifelse(n_finished == 1, "", "s"),
+  date_str,
+  ifelse(is.na(pct_finished), "NA", pct_finished)
+)
+cat(msg_finished, "\n")
+
+# Phase 
+
+n_phase_known_finished <- sum(!is.na(df_finished$Phase))
+pct_phase_known_finished <- if (n_finished > 0) round(100 * n_phase_known_finished / n_finished, 1) else NA_real_
+
+msg_finished_phase <- sprintf(
+  "Phase information available for %d of %d completed trials (%s%%).",
+  n_phase_known_finished, n_finished,
+  ifelse(is.na(pct_phase_known_finished), "NA", pct_phase_known_finished)
+)
+cat(msg_finished_phase, "\n")
+
+finished_phase_breakdown <- df_finished %>%
+  dplyr::filter(!is.na(Phase)) %>%
+  dplyr::count(Phase, sort = TRUE)
+
+print(finished_phase_breakdown)
+
+order_phase <- c("Early Phase 1","Phase 1","Phase 1/2","Phase 2","Phase 2/3","Phase 3","Phase 4")
+finished_phase_breakdown$Phase <- factor(finished_phase_breakdown$Phase, levels = order_phase)
+
+ggplot(finished_phase_breakdown, aes(x = Phase, y = n)) +
+  geom_col() + coord_flip() +
+  labs(title = paste0("Completed trials by phase — ", condition),
+       subtitle = paste("As of", date_str),
+       x = "Phase", y = "Count")
+
+# Duration
+
+finished_dates <- df_finished %>%
+  transmute(
+    Start = lubridate::ymd(StartDate, quiet = TRUE),
+    PComp = lubridate::ymd(PrimaryCompletionDate, quiet = TRUE),
+    Comp  = lubridate::ymd(CompletionDate, quiet = TRUE)
+  ) %>%
+  mutate(
+    End = coalesce(Comp, PComp),
+    DurationMonths = if_else(
+      !is.na(Start) & !is.na(End) & End >= Start,
+      time_length(interval(Start, End), "months"),
+      as.numeric(NA)
+    )
+  )
+  
+n_start_known_finished <- sum(!is.na(finished_dates$Start))
+pct_start_known_finished <- if (n_finished > 0) round(100 * n_start_known_finished / n_finished, 1) else NA_real_
+
+n_comp_known_finished <- sum(!is.na(finished_dates$Comp))
+pct_comp_known_finished <- if (n_finished > 0) round(100 * n_comp_known_finished / n_finished, 1) else NA_real_
+
+n_pcomp_known_finished <- sum(!is.na(finished_dates$PComp))
+pct_pcomp_known_finished <- if (n_finished > 0) round(100 * n_pcomp_known_finished / n_finished, 1) else NA_real_
+
+cat(sprintf("Start date available for %d of %d completed trials (%s%%).\n",
+            n_start_known_finished, n_finished,
+            ifelse(is.na(pct_start_known_finished), "NA", pct_start_known_finished)))
+
+cat(sprintf("Completion date available for %d of %d completed trials (%s%%).\n",
+            n_comp_known_finished, n_finished,
+            ifelse(is.na(pct_comp_known_finished), "NA", pct_comp_known_finished)))
+
+cat(sprintf("Primary completion date available for %d of %d completed trials (%s%%).\n",
+            n_pcomp_known_finished, n_finished,
+            ifelse(is.na(pct_pcomp_known_finished), "NA", pct_pcomp_known_finished)))
+
+n_duration_finished <- sum(!is.na(finished_dates$DurationMonths))
+pct_duration_finished <- if (n_finished > 0) round(100 * n_duration_finished / n_finished, 1) else NA_real_
+mean_duration_m   <- if (n_duration_finished > 0) round(mean(finished_dates$DurationMonths, na.rm = TRUE), 1) else NA_real_
+median_duration_m <- if (n_duration_finished > 0) round(stats::median(finished_dates$DurationMonths, na.rm = TRUE), 1) else NA_real_
+
+cat(sprintf("Study duration computable for %d of %d completed trials (%s%%). Mean: %s months (median: %s).\n",
+            n_duration_finished, n_finished,
+            ifelse(is.na(pct_duration_finished), "NA", pct_duration_finished),
+            ifelse(is.na(mean_duration_m), "NA", mean_duration_m),
+            ifelse(is.na(median_duration_m), "NA", median_duration_m)))
+
+duration_breakdown <- finished_dates %>%
+  dplyr::filter(!is.na(DurationMonths), DurationMonths >= 0) %>%
+  dplyr::mutate(
+    Bucket = cut(DurationMonths,
+                 breaks = c(-Inf, 6, 12, 24, 36, 60, Inf),
+                 labels = c("<6", "6–12", "12–24", "24–36", "36–60", "≥60"),
+                 right = FALSE)
+  ) %>%
+  dplyr::count(Bucket, .drop = FALSE) %>%
+  dplyr::mutate(
+    pct_num = if (n_duration_finished > 0) 100 * n / n_duration_finished else NA_real_,
+    pct = ifelse(is.na(pct_num), "NA", sprintf("%.1f%%", pct_num))
+  )
+
+print(duration_breakdown)
+
+ggplot(duration_breakdown, aes(x = Bucket, y = pct_num)) +
+  geom_col() +
+  labs(
+    title = paste0("Duration of completed trials — ", condition),
+    subtitle = paste("As of", date_str, "| Percent of trials with computable duration"),
+    x = "Months", y = "Percent"
+  )
+
+# Enrollment
+
+n_enroll_known_finished <- sum(!is.na(df_finished$Enrollment))
+cat(sprintf("Enrollment available for %d of %d completed trials.\n",
+            n_enroll_known_finished, n_finished))
+
+if (n_enroll_known_finished > 0) {
+  enroll_vals <- df_finished$Enrollment[!is.na(df_finished$Enrollment)]
+  cat(sprintf("Enrollment range: %d–%d; mean: %.1f participants.\n",
+              min(enroll_vals), max(enroll_vals), mean(enroll_vals)))
+}
+
+# Sex (if proceeds)
+skip_sex <- grepl("(prostate|prostatic|testicular|testis|testicle)", tolower(condition))
+if (!skip_sex) {
+  sex_tbl <- df_finished %>%
+    dplyr::transmute(SexRaw = toupper(trimws(Sex))) %>%
+    dplyr::mutate(
+      SexCat = dplyr::case_when(
+        is.na(SexRaw) | SexRaw %in% c("", "N/A", "NA") ~ NA_character_,
+        grepl("ALL", SexRaw) ~ "All",
+        grepl("FEMALE", SexRaw) & !grepl("MALE", SexRaw) ~ "Female only",
+        grepl("MALE", SexRaw)   & !grepl("FEMALE", SexRaw) ~ "Male only",
+        TRUE ~ "Other/Complex"
+      )
+    )
+
+  n_known_sex <- sum(!is.na(sex_tbl$SexCat))
+  pct_known_sex <- if (n_finished > 0) round(100 * n_known_sex / n_finished, 1) else NA_real_
+
+  cat(sprintf("Sex eligibility available for %d of %d completed trials (%s%%).\n",
+              n_known_sex, n_finished,
+              ifelse(is.na(pct_known_sex), "NA", pct_known_sex)))
+
+  sex_levels <- c("All","Male only","Female only","Other/Complex")
+
+  sex_breakdown <- sex_tbl %>%
+    dplyr::filter(!is.na(SexCat)) %>%
+    dplyr::mutate(SexCat = factor(SexCat, levels = sex_levels)) %>%
+    dplyr::count(SexCat, .drop = FALSE) %>%
+    dplyr::mutate(pct = if (n_known_sex > 0) round(100 * n / n_known_sex, 1) else NA_real_)
+
+  print(sex_breakdown)
+
+  ggplot(sex_breakdown, aes(x = SexCat, y = n)) +
+    geom_col() +
+    labs(
+      title = paste0("Completed trials by sex eligibility — ", condition),
+      subtitle = paste("As of", date_str),
+      x = "Sex eligibility", y = "Count"
+    )
+} else {
+  cat("Sex eligibility breakdown skipped (condition is prostatic/testicular).\n")
+}
+
+# Intervention 
+
+n_interv_known_finished <- sum(!is.na(df_finished$Interventions) & nzchar(trimws(df_finished$Interventions)))
+pct_interv_known_finished <- if (n_finished > 0) round(100 * n_interv_known_finished / n_finished, 1) else NA_real_
+
+msg_finished_interv <- sprintf(
+  "Intervention information available for %d of %d completed trials (%s%%).",
+  n_interv_known_finished, n_finished,
+  ifelse(is.na(pct_interv_known_finished), "NA", pct_interv_known_finished)
+)
+cat(msg_finished_interv, "\n")
+
+finished_interv_breakdown <- df_finished %>%
+  dplyr::filter(!is.na(SimpleIntervention) & nzchar(SimpleIntervention)) %>%
+  dplyr::count(SimpleIntervention, sort = TRUE)
+
+print(finished_interv_breakdown)
+
+ggplot(finished_interv_breakdown,
+       aes(x = forcats::fct_reorder(SimpleIntervention, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = paste0("Completed trials by intervention type — ", condition),
+    subtitle = paste("As of", date_str),
+    x = "Intervention type", y = "Count"
+  )
+
+# Sponsors & Collaborators
+
+n_sponsor_known_finished <- sum(!is.na(df_finished$Sponsor) & nzchar(trimws(df_finished$Sponsor)))
+pct_sponsor_known_finished <- if (n_finished > 0) round(100 * n_sponsor_known_finished / n_finished, 1) else NA_real_
+
+n_collab_known_finished <- sum(!is.na(df_finished$Collaborators) & nzchar(trimws(df_finished$Collaborators)))
+pct_collab_known_finished <- if (n_finished > 0) round(100 * n_collab_known_finished / n_finished, 1) else NA_real_
+
+msg_finished_sponsor <- sprintf(
+  "Sponsor information available for %d of %d completed trials (%s%%).",
+  n_sponsor_known_finished, n_finished,
+  ifelse(is.na(pct_sponsor_known_finished), "NA", pct_sponsor_known_finished)
+)
+cat(msg_finished_sponsor, "\n")
+
+msg_finished_collab <- sprintf(
+  "Collaborator information available for %d of %d completed trials (%s%%).",
+  n_collab_known_finished, n_finished,
+  ifelse(is.na(pct_collab_known_finished), "NA", pct_collab_known_finished)
+)
+cat(msg_finished_collab, "\n")
+
+
+finished_sponsor_top <- df_finished %>%
+  dplyr::filter(!is.na(Sponsor) & nzchar(trimws(Sponsor))) %>%
+  dplyr::transmute(Sponsor = trimws(Sponsor)) %>%
+  tidyr::separate_rows(Sponsor, sep = ";") %>%
+  dplyr::mutate(Sponsor = trimws(Sponsor)) %>%
+  dplyr::filter(nzchar(Sponsor)) %>%
+  dplyr::count(Sponsor, sort = TRUE) %>%
+  dplyr::mutate(pct = if (n_finished > 0) sprintf("%.1f%%", 100 * n / n_finished) else "NA") %>%
+  dplyr::slice_head(n = 10)
+
+cat("Top 10 sponsors (share of completed trials)\n")
+print(finished_sponsor_top)
+
+finished_collaborators_top <- df_finished %>%
+  dplyr::filter(!is.na(Collaborators) & nzchar(trimws(Collaborators))) %>%
+  dplyr::transmute(Collaborators = trimws(Collaborators)) %>%
+  tidyr::separate_rows(Collaborators, sep = ";") %>%
+  dplyr::mutate(Collaborator = trimws(Collaborators)) %>%
+  dplyr::filter(nzchar(Collaborator)) %>%
+  dplyr::filter(!(Collaborator != "NIH" & stringr::str_detect(Collaborator, "^[A-Z0-9 &/\\-]+$"))) %>%
+  dplyr::count(Collaborator, sort = TRUE) %>%
+  dplyr::mutate(pct = if (n_finished > 0) sprintf("%.1f%%", 100 * n / n_finished) else "NA") %>%
+  dplyr::slice_head(n = 10)
+
+cat("Top 10 collaborators (share of completed trials)\n")
+print(finished_collaborators_top)
+```
