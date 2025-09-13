@@ -1,5 +1,0 @@
-# Ignore raw and processed trial data
-*.csv
-*.rds
-*.html
-*.pdf
