@@ -1,12 +1,12 @@
 # Urology Trials
 
-This repository contains R scripts and notebooks to **download, clean, and analyze** clinical trial data in **urology** from ClinicalTrials.gov.  
+This repository contains R scripts, notebooks, and a Shiny app to **download, clean, explore, and visualize** clinical trial data in **urology** from ClinicalTrials.gov.  
 
-The aim is to build reproducible pipelines for:  
-- Downloading raw trial data.  
-- Cleaning and harmonizing relevant fields (phase, interventions, outcomes, sponsors, etc...).  
-- Generating summary datasets and exploratory reports.  
-- Preparing for integration into an **R Shiny application** for interactive visualization of the urology clinical trial landscape.  
+The goal is to provide reproducible pipelines for:  
+- Downloading raw trial data  
+- Cleaning and harmonizing key fields (phase, interventions, sponsors, dates, etc.)  
+- Producing summary datasets and exploratory reports  
+- Visualizing results through an interactive **R Shiny dashboard**  
 
 ---
 
@@ -15,8 +15,10 @@ The aim is to build reproducible pipelines for:
 - **download_trials.R** — Retrieves trial data from ClinicalTrials.gov  
 - **clean_trials.R** — Cleans and standardizes trial fields for analysis  
 - **exploratory_analysis.Rmd** — R Markdown notebook to generate descriptive statistics and plots (HTML/PDF reports)  
+- **app.R** — Shiny dashboard for interactive exploration of urology clinical trials  
 
 ---
 
 ## Next steps
-- Develop interactive R Shiny dashboards.
+- Extend the Shiny dashboard with additional views and filters  
+- Automate regular data refresh and report generation  
